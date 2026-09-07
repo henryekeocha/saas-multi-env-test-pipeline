@@ -236,6 +236,10 @@ does not physically prevent a merge.
 
 Settings → Environments → `uat` (and `prod`) → **Required reviewers**.
 
+The `dev`, `uat` and `prod` environments already exist — GitHub created them
+the first time each workflow referenced one — so this is only a matter of
+adding reviewers to `uat` and `prod`.
+
 This is what turns `promote.yml` into an approval gate: with reviewers
 configured, the `promote` job pauses and waits for a named human before any
 promotion step runs. Environment protection rules cannot be set reliably from
