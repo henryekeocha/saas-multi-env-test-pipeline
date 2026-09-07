@@ -32,9 +32,9 @@ jobs:
     name: Integration tests against a running instance
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '20'
           cache: npm
@@ -80,7 +80,7 @@ jobs:
     name: Terraform validate (dev)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: hashicorp/setup-terraform@v3
         with:
@@ -96,7 +96,7 @@ jobs:
     needs: [integration-tests, terraform-dev]
     environment: dev
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: What a real deployment would run
         run: |
