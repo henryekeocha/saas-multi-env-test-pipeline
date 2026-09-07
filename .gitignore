@@ -1,0 +1,41 @@
+# --- Terraform ---------------------------------------------------------------
+.terraform/
+# The provider lock file is not committed here. A committed lock must carry
+# checksums for every platform that runs `terraform init` (developer macOS and
+# the Linux CI runner), which means maintaining it with
+# `terraform providers lock -platform=linux_amd64 -platform=darwin_arm64`.
+# A production repo should do exactly that; this demo pins via the `~> 5.0`
+# constraint in providers.tf instead so it initialises anywhere.
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+# Never commit real variable values; the checked-in environments/*.tfvars are
+# deliberate, safe demo configuration.
+*.auto.tfvars
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# --- Node --------------------------------------------------------------------
+node_modules/
+coverage/
+*.log
+npm-debug.log*
+.npm/
+
+# --- Secrets / local ---------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+credentials
+
+# --- Editors / OS ------------------------------------------------------------
+.DS_Store
+.idea/
+.vscode/
+*.swp

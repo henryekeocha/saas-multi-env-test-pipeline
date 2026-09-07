@@ -1,0 +1,27 @@
+{
+  "name": "saas-multi-env-demo-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Demo SaaS billing API used to exercise a DEV/UAT/PROD promotion pipeline",
+  "license": "MIT",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "jest",
+    "test:unit": "jest --selectProjects unit",
+    "test:integration": "jest --selectProjects integration",
+    "test:coverage": "jest --coverage"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "eslint": "^9.18.0",
+    "jest": "^29.7.0"
+  }
+}

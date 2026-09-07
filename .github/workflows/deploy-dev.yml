@@ -1,0 +1,126 @@
+# Gate 2 — every merge to main lands in DEV automatically.
+#
+# IMPORTANT: this workflow does NOT deploy to a real AWS account. It runs the
+# integration suite and the smoke test against an instance of the application
+# started inside the runner, and validates the DEV Terraform configuration
+# without credentials. The "deploy" step prints the commands a real pipeline
+# would run. See README.md for what changes in a live setup.
+
+name: Deploy to DEV
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  APP_PORT: '3000'
+
+jobs:
+  integration-tests:
+    name: Integration tests against a running instance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        working-directory: app
+        run: npm ci
+
+      # These start the app on an ephemeral port themselves and talk to it over
+      # real HTTP — no mocked transport.
+      - name: Integration test suite
+        working-directory: app
+        run: npm run test:integration
+
+      - name: Start the application
+        working-directory: app
+        env:
+          APP_ENV: dev
+          APP_VERSION: ${{ github.sha }}
+          PORT: ${{ env.APP_PORT }}
+        run: |
+          npm start > "${RUNNER_TEMP}/app.log" 2>&1 &
+          echo "APP_PID=$!" >> "${GITHUB_ENV}"
+
+      # The same script a real pipeline would point at the DEV load balancer,
+      # aimed at the local instance instead.
+      - name: Smoke test the running instance
+        env:
+          SMOKE_RETRIES: '20'
+          SMOKE_INTERVAL_SECONDS: '2'
+        run: ./scripts/smoke-test.sh "http://127.0.0.1:${APP_PORT}" dev
+
+      - name: Application log
+        if: always()
+        run: cat "${RUNNER_TEMP}/app.log" || true
+
+      - name: Stop the application
+        if: always()
+        run: kill "${APP_PID}" 2>/dev/null || true
+
+  terraform-dev:
+    name: Terraform validate (dev)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+          terraform_wrapper: false
+
+      - name: Validate the DEV configuration
+        run: ./scripts/validate-terraform.sh dev
+
+  deploy-dev:
+    name: Deploy to DEV (simulated)
+    runs-on: ubuntu-latest
+    needs: [integration-tests, terraform-dev]
+    environment: dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: What a real deployment would run
+        run: |
+          echo "Tests are green and the DEV configuration is valid."
+          echo ""
+          echo "In a live pipeline this job would, with an OIDC-assumed AWS role:"
+          echo "  1. docker build -t \$ECR_REPO:${GITHUB_SHA} app/"
+          echo "  2. docker push \$ECR_REPO:${GITHUB_SHA}"
+          echo "  3. terraform apply -auto-approve \\"
+          echo "       -var-file=environments/dev.tfvars \\"
+          echo "       -var container_image=\$ECR_REPO:${GITHUB_SHA} \\"
+          echo "       -var app_version=${GITHUB_SHA}"
+          echo "  4. scripts/smoke-test.sh \"\$(terraform output -raw service_url)\" dev"
+          echo ""
+          echo "This repository stops here on purpose: it provisions nothing."
+
+      - name: Mark the commit as promotable to UAT
+        run: |
+          {
+            echo "### DEV deployment simulated"
+            echo ""
+            echo "Commit \`${GITHUB_SHA}\` passed integration tests, the smoke test"
+            echo "and DEV Terraform validation."
+            echo ""
+            echo "It is now eligible for promotion. Run the **Promote** workflow"
+            echo "with \`environment: uat\` to continue."
+          } >> "${GITHUB_STEP_SUMMARY}"

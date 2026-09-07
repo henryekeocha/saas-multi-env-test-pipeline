@@ -1,0 +1,187 @@
+# Gate 3 — promotion to UAT or PROD.
+#
+# Manual trigger only. The `environment:` key on the promote job is what makes
+# this a real approval gate: once required reviewers are configured on the
+# `uat` and `prod` GitHub Environments (repo Settings -> Environments; see
+# README, this cannot reliably be scripted), the job pauses and waits for a
+# human before any promotion step runs.
+#
+# As with the other workflows, nothing is provisioned in AWS. The smoke test
+# runs against an instance started in the runner and labelled as the target
+# environment, so the pass/fail path — and the rollback branch behind it — is
+# genuinely exercised.
+
+name: Promote
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        type: choice
+        options: [uat, prod]
+      release_ref:
+        description: Commit SHA or tag being promoted (defaults to the current ref)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: promote-${{ inputs.environment }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  APP_PORT: '3000'
+
+jobs:
+  # Runs before the approval gate: a reviewer should never be asked to approve
+  # a promotion that could not possibly succeed.
+  preflight:
+    name: Preflight — validate ${{ inputs.environment }} configuration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_ref || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+          terraform_wrapper: false
+
+      - name: Install dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Re-run the full test suite with the coverage gate
+        working-directory: app
+        run: npm run test:coverage
+
+      - name: Validate the ${{ inputs.environment }} Terraform configuration
+        run: ./scripts/validate-terraform.sh ${{ inputs.environment }}
+
+      - name: Preflight summary
+        run: |
+          {
+            echo "### Preflight passed for \`${{ inputs.environment }}\`"
+            echo ""
+            echo "- Full test suite green, coverage thresholds met"
+            echo "- \`terraform validate\` clean against \`environments/${{ inputs.environment }}.tfvars\`"
+            echo ""
+            echo "Awaiting approval on the \`${{ inputs.environment }}\` environment."
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  promote:
+    name: Promote to ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    needs: [preflight]
+    # THE APPROVAL GATE. With required reviewers configured on this GitHub
+    # Environment, everything below waits for a human to approve.
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_ref || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Record the currently deployed release (rollback target)
+        run: |
+          # In a live pipeline this reads the running task definition revision
+          # so the rollback step knows exactly what to return to:
+          #   aws ecs describe-services --cluster saas-demo-${{ inputs.environment }}-cluster \
+          #     --services saas-demo-${{ inputs.environment }}-api \
+          #     --query 'services[0].taskDefinition' --output text
+          echo "PREVIOUS_RELEASE=saas-demo-${{ inputs.environment }}-api:previous" >> "${GITHUB_ENV}"
+          echo "Recorded rollback target before changing anything."
+
+      - name: Deploy to ${{ inputs.environment }} (simulated)
+        run: |
+          echo "In a live pipeline this job would, with an OIDC-assumed AWS role:"
+          echo "  terraform apply -auto-approve \\"
+          echo "    -var-file=environments/${{ inputs.environment }}.tfvars \\"
+          echo "    -var container_image=\$ECR_REPO:${GITHUB_SHA} \\"
+          echo "    -var app_version=${GITHUB_SHA}"
+          echo ""
+          echo "This repository provisions nothing; the release under test is"
+          echo "started locally instead so the smoke-test gate still runs for real."
+
+      - name: Start the promoted release
+        working-directory: app
+        env:
+          APP_ENV: ${{ inputs.environment }}
+          APP_VERSION: ${{ github.sha }}
+          PORT: ${{ env.APP_PORT }}
+        run: |
+          npm start > "${RUNNER_TEMP}/app.log" 2>&1 &
+          echo "APP_PID=$!" >> "${GITHUB_ENV}"
+
+      # THE PRODUCTION SAFETY NET. A non-zero exit here fails the job and
+      # triggers the rollback step below. In a live pipeline the URL is
+      # `terraform output -raw service_url`.
+      - name: Post-deploy smoke test
+        id: smoke
+        env:
+          SMOKE_RETRIES: '20'
+          SMOKE_INTERVAL_SECONDS: '2'
+        run: ./scripts/smoke-test.sh "http://127.0.0.1:${APP_PORT}" "${{ inputs.environment }}"
+
+      - name: Roll back — smoke test failed
+        if: failure() && steps.smoke.outcome == 'failure'
+        env:
+          DRY_RUN: 'true'
+        run: |
+          {
+            echo "### :rotating_light: Rollback triggered for \`${{ inputs.environment }}\`"
+            echo ""
+            echo "The post-deploy smoke test failed, so the release was not kept."
+            echo "Rollback target: \`${PREVIOUS_RELEASE}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+          ./scripts/rollback.sh "${{ inputs.environment }}"
+          exit 1
+
+      - name: Application log
+        if: always()
+        run: cat "${RUNNER_TEMP}/app.log" || true
+
+      - name: Stop the application
+        if: always()
+        run: kill "${APP_PID}" 2>/dev/null || true
+
+      - name: Promotion summary
+        if: success()
+        run: |
+          {
+            echo "### Promoted to \`${{ inputs.environment }}\`"
+            echo ""
+            echo "| Step | Result |"
+            echo "| --- | --- |"
+            echo "| Preflight tests + coverage gate | passed |"
+            echo "| Terraform validation (\`${{ inputs.environment }}.tfvars\`) | passed |"
+            echo "| Manual approval | granted |"
+            echo "| Post-deploy smoke test | passed |"
+            echo "| Rollback | not needed |"
+            echo ""
+            echo "Release: \`${{ inputs.release_ref || github.sha }}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
