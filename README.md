@@ -5,17 +5,17 @@ application on AWS: a change moves from pull request to DEV to UAT to PROD, and
 at every step an automated gate decides whether it is allowed to continue.
 Nothing reaches UAT without passing tests against DEV; nothing reaches PROD
 without a human approval *and* a post-deploy smoke test that rolls the release
-back on failure. The testing and QA machinery is the point of this repo — the
+back on failure. The testing and QA machinery is the point of this repo. The
 AWS side is deliberately kept simple and clean so the promotion logic is the
 thing on display.
 
 > **This repository does not deploy to any AWS account.** The GitHub Actions
-> workflows genuinely run — tests, coverage gates, `terraform fmt` and
-> `terraform validate` all execute in CI on every push and pull request — but
-> no AWS credentials are configured, `terraform plan`/`apply` are never
-> invoked, and no infrastructure is created. The steps that would deploy print
-> the exact commands a live pipeline would run. See
-> [Running this for real](#running-this-for-real).
+> workflows genuinely run: tests, coverage gates, `terraform fmt` and
+> `terraform validate` all execute in CI on every push and pull request. What
+> does not happen is deployment. No AWS credentials are configured,
+> `terraform plan`/`apply` are never invoked, and no infrastructure is created.
+> The steps that would deploy print the exact commands a live pipeline would
+> run. See [Running this for real](#running-this-for-real).
 
 ## The pipeline
 
@@ -56,11 +56,11 @@ test layers and the coverage gate is in
 
 **Automated testing**
 
-- Unit tests over real business logic — a subscription pricing engine with
+- Unit tests over real business logic: a subscription pricing engine with
   seat overage tiers, annual discounting, mid-cycle proration and tax, tested
   at every tier boundary and on every rejection path
 - Integration tests that start the actual server and drive it over HTTP,
-  asserting status codes, headers, JSON bodies and the error contract — not
+  asserting status codes, headers, JSON bodies and the error contract, not
   in-process handler calls
 - A smoke test that is a black-box `curl` check against a deployed URL, whose
   exit code is the release decision
@@ -70,7 +70,7 @@ test layers and the coverage gate is in
 
 - A coverage gate that fails the build below 80% globally and 95% on the
   pricing module, so a well-covered periphery cannot subsidise an untested
-  money path — and branch coverage is included, so error paths must be
+  money path. Branch coverage is included too, so error paths must be
   exercised
 - Environment promotion discipline: DEV is proven before UAT is offered, UAT is
   signed off before PROD is offered, and each promotion re-runs the full suite
@@ -97,12 +97,12 @@ test layers and the coverage gate is in
 
 ```
 app/                            Express API under test
-  src/lib/pricing.js            Billing engine — the business logic worth unit testing
+  src/lib/pricing.js            Billing engine: the business logic worth unit testing
   src/lib/validation.js         Request parsing with per-field error reporting
   src/routes/                   CRUD + quote endpoints
   tests/unit/                   Isolated logic tests
   tests/integration/            Tests against a running server over HTTP
-  jest.config.js                Coverage thresholds — the merge gate
+  jest.config.js                Coverage thresholds: the merge gate
 
 terraform/
   main.tf                       Root module: network + app-environment
@@ -111,9 +111,9 @@ terraform/
   environments/{dev,uat,prod}.tfvars   Same infrastructure, three sizes
 
 .github/workflows/
-  pr-checks.yml                 Gate 1 — lint, unit tests, coverage, validate x3
-  deploy-dev.yml                Gate 2 — integration + smoke tests on merge to main
-  promote.yml                   Gate 3 — approval-gated promotion to UAT or PROD
+  pr-checks.yml                 Gate 1: lint, unit tests, coverage, validate x3
+  deploy-dev.yml                Gate 2: integration + smoke tests on merge to main
+  promote.yml                   Gate 3: approval-gated promotion to UAT or PROD
 
 scripts/
   validate-terraform.sh         fmt + validate + evaluate one environment's tfvars
@@ -128,7 +128,7 @@ to test, so the endpoints do actual work rather than returning fixtures.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/healthz` | Liveness — the ALB target group health check |
+| `GET` | `/healthz` | Liveness: the ALB target group health check |
 | `GET` | `/readyz` | Readiness, plus the environment and version it believes it is running |
 | `GET` | `/api/v1/plans` | Plan catalogue |
 | `GET` | `/api/v1/subscriptions` | List subscriptions, filterable by plan |
@@ -145,10 +145,10 @@ integer cents.
 
 ## Prerequisites
 
-- **Node.js 20+** and npm — to run the app and its tests
-- **Terraform 1.5+** — to validate the infrastructure (no AWS account needed)
-- **curl** — used by the smoke test
-- **bash** — used by the scripts
+- **Node.js 20+** and npm (runs the app and its tests)
+- **Terraform 1.5+** (validates the infrastructure; no AWS account needed)
+- **curl** (used by the smoke test)
+- **bash** (used by the scripts)
 
 No AWS credentials are required for anything in this repo.
 
@@ -217,7 +217,7 @@ in private subnets, which is what makes UAT a meaningful rehearsal for PROD.
 
 Two things cannot be configured from within the repository and have to be set
 in GitHub's UI. **Neither is done in this demo repo**, so the workflows here
-run without pausing — configure them to make the gates enforcing.
+run without pausing. Configure them to make the gates enforcing.
 
 ### 1. Branch protection on `main`
 
@@ -229,15 +229,15 @@ Settings → Branches → Add branch ruleset for `main`:
   three Terraform validations)
 - Require branches to be up to date before merging
 
-Without this, `pr-checks.yml` still runs and still reports failure — it just
+Without this, `pr-checks.yml` still runs and still reports failure; it just
 does not physically prevent a merge.
 
 ### 2. Required reviewers on the `uat` and `prod` environments
 
 Settings → Environments → `uat` (and `prod`) → **Required reviewers**.
 
-The `dev`, `uat` and `prod` environments already exist — GitHub created them
-the first time each workflow referenced one — so this is only a matter of
+GitHub created the `dev`, `uat` and `prod` environments the first time each
+workflow referenced one, so they already exist. This is only a matter of
 adding reviewers to `uat` and `prod`.
 
 This is what turns `promote.yml` into an approval gate: with reviewers
@@ -252,16 +252,16 @@ promotion step runs. Environment protection rules cannot be set reliably from
 
 To turn this from a demonstration into a working deployment pipeline:
 
-1. **Containerise the app** — add a `Dockerfile` to `app/` and an ECR
+1. **Containerise the app**: add a `Dockerfile` to `app/` and an ECR
    repository per environment (or one repository with immutable tags).
-2. **Set up remote state** — uncomment the `backend "s3"` block in
+2. **Set up remote state**: uncomment the `backend "s3"` block in
    `terraform/providers.tf` and create one state key per environment, with a
    DynamoDB table for locking.
-3. **Give the workflows an AWS identity** — configure GitHub OIDC with one IAM
+3. **Give the workflows an AWS identity**: configure GitHub OIDC with one IAM
    role per environment, add `permissions: id-token: write` to the deploying
    jobs, and use `aws-actions/configure-aws-credentials@v4`. Scope the PROD
    role to the `prod` environment so a DEV job cannot touch PROD.
-4. **Replace the simulated deploy steps** — in `deploy-dev.yml` and
+4. **Replace the simulated deploy steps**: in `deploy-dev.yml` and
    `promote.yml`, swap the `echo` blocks for the commands they print:
    ```bash
    docker build -t "$ECR_REPO:$GITHUB_SHA" app/ && docker push "$ECR_REPO:$GITHUB_SHA"
@@ -271,12 +271,12 @@ To turn this from a demonstration into a working deployment pipeline:
      -var "app_version=$GITHUB_SHA"
    ./scripts/smoke-test.sh "$(terraform output -raw service_url)" "$ENVIRONMENT"
    ```
-5. **Promote plan to a gate** — add `terraform plan -var-file=... -detailed-exitcode`
+5. **Promote plan to a gate**: add `terraform plan -var-file=... -detailed-exitcode`
    to the PR checks so infrastructure diffs are reviewed on the pull request.
-6. **Arm the rollback** — set `DRY_RUN=false` in the rollback step of
+6. **Arm the rollback**: set `DRY_RUN=false` in the rollback step of
    `promote.yml` so `scripts/rollback.sh` actually calls `aws ecs update-service`
    instead of printing what it would do.
-7. **Add HTTPS** — an ACM certificate, a 443 listener, and a redirect from 80.
+7. **Add HTTPS**: an ACM certificate, a 443 listener, and a redirect from 80.
 
 ## Verified
 
@@ -285,8 +285,8 @@ Everything below was run before this repo was published:
 - Full suite: **90 tests across 5 suites, all passing**
 - Coverage: **99.5% statements, 96.7% branches**, above both thresholds
 - The coverage gate was deliberately broken (by removing the pricing unit
-  tests) to confirm it fails the build — 45 tests still passed and the run
-  still exited 1 — then restored
+  tests) to confirm it fails the build. 45 tests still passed and the run
+  still exited 1. Restored afterwards.
 - The tfvars validation gate was deliberately broken (an illegal `task_cpu`
   value in `dev.tfvars`) to confirm it exits 1, then restored
 - `terraform fmt -recursive -check` clean
@@ -298,4 +298,4 @@ Everything below was run before this repo was published:
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
